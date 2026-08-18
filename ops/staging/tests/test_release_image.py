@@ -181,6 +181,7 @@ class ReleaseImageTest(unittest.TestCase):
 
         self.assertIn("enable_starttls: true", configuration)
         self.assertNotIn("enable_starttls_auto", configuration)
+        self.assertIn("port: 2587", configuration)
         self.assertIn('outgoing_address: "notifications@bonesrnd.com"', configuration)
 
     def test_canvas_uses_a_cookie_isolated_files_domain(self):
