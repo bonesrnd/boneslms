@@ -75,6 +75,21 @@ class ReleaseImageTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(expected_base, path.read_text())
 
+    def test_production_image_disables_the_inherited_passenger_apt_source(self):
+        for path in (DOCKERFILE, DOCKERFILE_TEMPLATE):
+            with self.subTest(path=path):
+                dockerfile = path.read_text()
+                self.assertIn(
+                    "rm -f /etc/apt/sources.list.d/passenger.list",
+                    dockerfile,
+                )
+                disable_source = dockerfile.index(
+                    "rm -f /etc/apt/sources.list.d/passenger.list"
+                )
+                apt_update = dockerfile.index("apt-get update -qq")
+
+                self.assertLess(disable_source, apt_update)
+
     def test_deploy_runs_the_supported_postdeploy_migration_task(self):
         script = DEPLOY_SCRIPT.read_text()
 
