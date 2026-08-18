@@ -203,7 +203,7 @@ jobs:
             --file - \
             config secrets |
             "${ssh_command[@]}" \
-              "tar --extract --gzip --overwrite --no-same-owner --file - --directory /opt/boneslms/shared"
+              "tar --extract --gzip --unlink-first --no-same-owner --file - --directory /opt/boneslms/shared"
 
           printf '%s' "${GHCR_TOKEN}" |
             "${ssh_command[@]}" \

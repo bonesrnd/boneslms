@@ -49,6 +49,15 @@ class StagingWorkflowTest(unittest.TestCase):
         )[0]
         self.assertNotIn("secrets.", deploy_header)
 
+    def test_runtime_transfer_replaces_read_only_previous_config(self):
+        workflow = WORKFLOW.read_text()
+        runtime_transfer = workflow.split(
+            '--directory "${RUNNER_TEMP}/runtime"',
+            maxsplit=1,
+        )[1].split("          printf", maxsplit=1)[0]
+
+        self.assertIn("--unlink-first", runtime_transfer)
+
 
 if __name__ == "__main__":
     unittest.main()
