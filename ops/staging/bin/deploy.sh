@@ -108,13 +108,22 @@ deployment_started=true
 "${compose[@]}" run --rm --no-deps brandable-css-init
 "${compose[@]}" up --detach --remove-orphans --wait --wait-timeout 300
 
+readiness_curl=(
+  curl
+  --fail
+  --silent
+  --show-error
+  --connect-timeout 5
+  --max-time 15
+)
 ready=false
-for _ in $(seq 1 60); do
-  if curl --fail --silent --show-error \
+readiness_deadline=$((SECONDS + 300))
+while ((SECONDS < readiness_deadline)); do
+  if "${readiness_curl[@]}" \
     --header "Host: canvas.bonesrnd.com" \
     --header "X-Forwarded-Proto: https" \
     "http://127.0.0.1:8080/readiness" >/dev/null &&
-    curl --fail --silent --show-error \
+    "${readiness_curl[@]}" \
       "http://127.0.0.1:3000/readiness" >/dev/null; then
     ready=true
     break

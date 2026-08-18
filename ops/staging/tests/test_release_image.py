@@ -116,6 +116,19 @@ class ReleaseImageTest(unittest.TestCase):
         self.assertIn("--wait", script)
         self.assertIn("--wait-timeout", script)
 
+    def test_canvas_allows_enough_time_for_a_cold_passenger_start(self):
+        compose = COMPOSE_FILE.read_text()
+
+        self.assertIn('PASSENGER_STARTUP_TIMEOUT: "300"', compose)
+
+    def test_deploy_bounds_the_readiness_wait(self):
+        script = DEPLOY_SCRIPT.read_text()
+
+        self.assertIn("readiness_deadline=$((SECONDS + 300))", script)
+        self.assertIn("--connect-timeout 5", script)
+        self.assertIn("--max-time 15", script)
+        self.assertNotIn("for _ in $(seq 1 60)", script)
+
     def test_jobs_healthcheck_requires_a_master_and_worker(self):
         compose = COMPOSE_FILE.read_text()
 
