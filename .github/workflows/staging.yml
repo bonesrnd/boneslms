@@ -1,0 +1,236 @@
+name: Bones LMS Staging
+
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+
+concurrency:
+  group: boneslms-staging
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build release image
+    if: github.ref == 'refs/heads/prod'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate release automation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s ops/staging/tests -p 'test_*.py' -v
+          shellcheck ops/staging/bin/*.sh ops/staging/bin/with-temporary-spaces-key
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and publish immutable image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: Dockerfile.production
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+
+  deploy:
+    name: Deploy release digest
+    if: github.ref == 'refs/heads/prod'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.CANVAS_URL }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out deployed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate deployment inputs
+        shell: bash
+        env:
+          CANVAS_URL: ${{ vars.CANVAS_URL }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          RCE_URL: ${{ vars.RCE_URL }}
+          SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME }}
+        run: |
+          set -euo pipefail
+          required=(
+            CANVAS_URL
+            IMAGE_DIGEST
+            RCE_URL
+            SSH_HOSTNAME
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing staging input: ${name}" >&2
+              exit 1
+            fi
+          done
+          [[ "${IMAGE_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          test -f ops/staging/secrets/staging.env.sops
+
+      - name: Install pinned deployment clients
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d "${RUNNER_TEMP}/bin"
+          curl --fail --silent --show-error --location \
+            "https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64" \
+            --output "${RUNNER_TEMP}/bin/sops"
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  ${RUNNER_TEMP}/bin/sops" |
+            sha256sum --check --strict
+          curl --fail --silent --show-error --location \
+            "https://github.com/cloudflare/cloudflared/releases/download/2026.5.1/cloudflared-linux-amd64" \
+            --output "${RUNNER_TEMP}/bin/cloudflared"
+          echo "3c6a5ba995a258dbe90f98e5fdb2c2620b7be72c3ca761614f6eb52aee252cea  ${RUNNER_TEMP}/bin/cloudflared" |
+            sha256sum --check --strict
+          chmod 0755 "${RUNNER_TEMP}/bin/sops" "${RUNNER_TEMP}/bin/cloudflared"
+          echo "${RUNNER_TEMP}/bin" >>"${GITHUB_PATH}"
+
+      - name: Render private runtime configuration
+        shell: bash
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${RESEND_API_KEY:?Missing staging RESEND_API_KEY}"
+          : "${SOPS_AGE_KEY:?Missing staging SOPS_AGE_KEY}"
+          umask 077
+          install -d "${RUNNER_TEMP}/runtime"
+          sops --decrypt \
+            --input-type dotenv \
+            --output-type dotenv \
+            ops/staging/secrets/staging.env.sops \
+            >"${RUNNER_TEMP}/runtime/staging.env"
+          ops/staging/bin/render-config.py \
+            --env-file "${RUNNER_TEMP}/runtime/staging.env" \
+            --config-dir "${RUNNER_TEMP}/runtime/config" \
+            --secret-dir "${RUNNER_TEMP}/runtime/secrets"
+          rm -f "${RUNNER_TEMP}/runtime/staging.env"
+
+      - name: Configure verified Cloudflare Access SSH
+        shell: bash
+        env:
+          SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOSTNAME:?Missing staging SSH_HOSTNAME}"
+          : "${SSH_KNOWN_HOSTS:?Missing staging SSH_KNOWN_HOSTS}"
+          : "${SSH_PRIVATE_KEY:?Missing staging SSH_PRIVATE_KEY}"
+          umask 077
+          install -d "${RUNNER_TEMP}/ssh"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" >"${RUNNER_TEMP}/ssh/id_ed25519"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" >"${RUNNER_TEMP}/ssh/known_hosts"
+          {
+            echo "Host boneslms-staging"
+            echo "  HostName ${SSH_HOSTNAME}"
+            echo "  User deploy"
+            echo "  IdentityFile ${RUNNER_TEMP}/ssh/id_ed25519"
+            echo "  IdentitiesOnly yes"
+            echo "  BatchMode yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  UserKnownHostsFile ${RUNNER_TEMP}/ssh/known_hosts"
+            echo "  ProxyCommand cloudflared access ssh --hostname %h"
+          } >"${RUNNER_TEMP}/ssh/config"
+          chmod 0600 "${RUNNER_TEMP}/ssh/id_ed25519" "${RUNNER_TEMP}/ssh/config"
+          echo "SSH_CONFIG=${RUNNER_TEMP}/ssh/config" >>"${GITHUB_ENV}"
+
+      - name: Transfer and deploy release
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${GHCR_TOKEN:?Missing GitHub registry token}"
+          : "${IMAGE_DIGEST:?Missing release image digest}"
+          : "${TUNNEL_SERVICE_TOKEN_ID:?Missing Cloudflare Access client ID}"
+          : "${TUNNEL_SERVICE_TOKEN_SECRET:?Missing Cloudflare Access client secret}"
+          release_dir="/opt/boneslms/releases/${GITHUB_SHA}"
+          image_ref="ghcr.io/${GITHUB_REPOSITORY}@${IMAGE_DIGEST}"
+          ssh_command=(ssh -F "${SSH_CONFIG}" boneslms-staging)
+          cleanup_registry_login() {
+            "${ssh_command[@]}" "docker logout ghcr.io >/dev/null 2>&1 || true" || true
+          }
+          trap cleanup_registry_login EXIT
+
+          "${ssh_command[@]}" "install -d -m 0750 '${release_dir}'"
+          tar \
+            --directory ops/staging \
+            --create \
+            --gzip \
+            --file - \
+            compose.yaml initial-setup.override.yaml bin |
+            "${ssh_command[@]}" \
+              "tar --extract --gzip --file - --directory '${release_dir}'"
+
+          tar \
+            --directory "${RUNNER_TEMP}/runtime" \
+            --create \
+            --gzip \
+            --file - \
+            config secrets |
+            "${ssh_command[@]}" \
+              "tar --extract --gzip --overwrite --no-same-owner --file - --directory /opt/boneslms/shared"
+
+          printf '%s' "${GHCR_TOKEN}" |
+            "${ssh_command[@]}" \
+              "docker login ghcr.io --username '${GHCR_USERNAME}' --password-stdin"
+          "${ssh_command[@]}" "'${release_dir}/bin/deploy.sh' '${image_ref}'"
+
+      - name: Verify protected staging endpoints
+        shell: bash
+        env:
+          CANVAS_URL: ${{ vars.CANVAS_URL }}
+          RCE_URL: ${{ vars.RCE_URL }}
+          TUNNEL_SERVICE_TOKEN_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          TUNNEL_SERVICE_TOKEN_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          : "${CANVAS_URL:?Missing staging CANVAS_URL}"
+          : "${RCE_URL:?Missing staging RCE_URL}"
+          : "${TUNNEL_SERVICE_TOKEN_ID:?Missing Cloudflare Access client ID}"
+          : "${TUNNEL_SERVICE_TOKEN_SECRET:?Missing Cloudflare Access client secret}"
+          access_headers=(
+            --header "CF-Access-Client-Id: ${TUNNEL_SERVICE_TOKEN_ID}"
+            --header "CF-Access-Client-Secret: ${TUNNEL_SERVICE_TOKEN_SECRET}"
+          )
+          curl --fail --silent --show-error "${access_headers[@]}" "${CANVAS_URL}/readiness" >/dev/null
+          curl --fail --silent --show-error "${access_headers[@]}" "${RCE_URL}/readiness" >/dev/null
+
+      - name: Remove runner plaintext
+        if: always()
+        shell: bash
+        run: rm -rf "${RUNNER_TEMP}/runtime" "${RUNNER_TEMP}/ssh"
