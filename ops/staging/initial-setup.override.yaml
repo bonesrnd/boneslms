@@ -1,0 +1,4 @@
+services:
+  web:
+    env_file:
+      - ${SECRET_DIR:-/opt/boneslms/shared/secrets}/initial_setup.env

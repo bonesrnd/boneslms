@@ -1,0 +1,11 @@
+production:
+  adapter: postgresql
+  encoding: utf8
+  database: {{DATABASE_NAME}}
+  host: {{DATABASE_HOST}}
+  port: {{DATABASE_PORT}}
+  username: {{DATABASE_USERNAME}}
+  password: {{DATABASE_PASSWORD}}
+  sslmode: verify-full
+  sslrootcert: /usr/src/app/config/database_ca.crt
+  timeout: 5000

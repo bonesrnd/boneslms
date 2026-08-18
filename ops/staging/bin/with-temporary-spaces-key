@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if (($# == 0)); then
+  echo "Usage: with-temporary-spaces-key <command> [args...]" >&2
+  exit 64
+fi
+
+: "${DIGITALOCEAN_TOKEN:?Missing DIGITALOCEAN_TOKEN}"
+
+temporary_access_key=""
+temporary_secret_key=""
+
+cleanup() {
+  unset SPACES_ACCESS_KEY_ID SPACES_SECRET_ACCESS_KEY temporary_secret_key
+  if [[ -n "${temporary_access_key}" ]]; then
+    if ! doctl --access-token "${DIGITALOCEAN_TOKEN}" \
+      spaces keys delete "${temporary_access_key}"; then
+      echo "warning: failed to delete temporary Spaces key ${temporary_access_key}" >&2
+    fi
+  fi
+}
+trap cleanup EXIT
+
+key_name="boneslms-staging-opentofu-temporary-$(date +%s)-$$"
+temporary_key_json="$(
+  doctl --access-token "${DIGITALOCEAN_TOKEN}" \
+    spaces keys create "${key_name}" \
+    --grants "bucket=;permission=fullaccess" \
+    --output json
+)"
+
+temporary_access_key="$(
+  python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+item = data[0] if isinstance(data, list) else data
+print(item.get("access_key") or item.get("access_key_id") or item.get("id") or "")
+' <<<"${temporary_key_json}"
+)"
+temporary_secret_key="$(
+  python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+item = data[0] if isinstance(data, list) else data
+print(item.get("secret_key") or item.get("secret_access_key") or "")
+' <<<"${temporary_key_json}"
+)"
+unset temporary_key_json
+
+if [[ -z "${temporary_access_key}" || -z "${temporary_secret_key}" ]]; then
+  echo "DigitalOcean did not return a complete temporary Spaces key" >&2
+  exit 1
+fi
+
+export SPACES_ACCESS_KEY_ID="${temporary_access_key}"
+export SPACES_SECRET_ACCESS_KEY="${temporary_secret_key}"
+
+"$@"

@@ -1,8 +1,26 @@
 .DS_Store
 .dockerignore
+.env
+.env.*
 .git
 .gitignore
+.github/
 .idea
+.sops.yaml
+
+# Runtime Canvas configuration contains credentials and must be mounted.
+/config/*.yml
+/config/*.yml.cached
+!/config/brakeman.yml
+!/config/brandable_css.yml
+!/config/browsers.yml
+!/config/code_ownership.yml
+!/config/credentials.test.yml
+!/config/crystalball.yml
+!/config/styleguide.yml
+
+# Deployment assets are not part of the Canvas application image.
+/ops/
 
 build/
 !build/vendor/woff-code-latest.zip

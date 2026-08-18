@@ -1,0 +1,180 @@
+name: boneslms
+
+x-canvas-service: &canvas-service
+  image: ${CANVAS_IMAGE:?Set CANVAS_IMAGE to an immutable GHCR image reference}
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 1m
+  environment:
+    RAILS_ENV: production
+    DISABLE_SPRING: "1"
+  depends_on:
+    redis:
+      condition: service_healthy
+  volumes:
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/amazon_s3.yml:/usr/src/app/config/amazon_s3.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/cache_store.yml:/usr/src/app/config/cache_store.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/database.yml:/usr/src/app/config/database.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/database_ca.crt:/usr/src/app/config/database_ca.crt:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/delayed_jobs.yml:/usr/src/app/config/delayed_jobs.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/domain.yml:/usr/src/app/config/domain.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/dynamic_settings.yml:/usr/src/app/config/dynamic_settings.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/file_store.yml:/usr/src/app/config/file_store.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/logging.yml:/usr/src/app/config/logging.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/outgoing_mail.yml:/usr/src/app/config/outgoing_mail.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/redis.yml:/usr/src/app/config/redis.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/security.yml:/usr/src/app/config/security.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/session_store.yml:/usr/src/app/config/session_store.yml:ro
+    - ${CONFIG_DIR:-/opt/boneslms/shared/config}/vault_contents.yml:/usr/src/app/config/vault_contents.yml:ro
+    - canvas_logs:/usr/src/app/log
+    - canvas_tmp_files:/usr/src/app/tmp/files
+    - canvas_brandable_css:/usr/src/app/public/dist/brandable_css
+  networks:
+    - app
+  logging:
+    driver: json-file
+    options:
+      max-size: 25m
+      max-file: "5"
+
+services:
+  brandable-css-init:
+    image: ${CANVAS_IMAGE:?Set CANVAS_IMAGE to an immutable GHCR image reference}
+    profiles: ["release"]
+    init: true
+    restart: "no"
+    user: "0:0"
+    network_mode: none
+    entrypoint: ["/bin/sh", "-ceu"]
+    command:
+      - |
+        cp -a /usr/src/app/public/dist/brandable_css/. /brandable-css/
+        chown -R 9999:9999 /brandable-css
+    volumes:
+      - canvas_brandable_css:/brandable-css
+
+  web:
+    <<: *canvas-service
+    environment:
+      RAILS_ENV: production
+      DISABLE_SPRING: "1"
+      PASSENGER_MIN_INSTANCES: "1"
+      PASSENGER_MAX_POOL_SIZE: "3"
+      NGINX_WORKER_CONNECTIONS: "2048"
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "--header",
+          "Host: canvas.bonesrnd.com",
+          "--header",
+          "X-Forwarded-Proto: https",
+          "http://127.0.0.1/readiness",
+        ]
+      interval: 30s
+      timeout: 15s
+      retries: 10
+      start_period: 2m
+
+  jobs:
+    <<: *canvas-service
+    command: ["bundle", "exec", "script/delayed_job", "run"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          master_pid="$$(pgrep -f '^delayed_jobs_pool( .*)?$')" &&
+          test -n "$${master_pid}" &&
+          pgrep -P "$${master_pid}" -f '^delayed:' >/dev/null
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 1m
+
+  redis:
+    image: redis:7.4-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    init: true
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  rce:
+    image: instructure/canvas-rce-api@sha256:d3683a20eb290f81572377d035b8216036958193f437fee9f30958e273591276
+    init: true
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export ECOSYSTEM_KEY="$$(cat /run/secrets/rce_ecosystem_key)"
+        export ECOSYSTEM_SECRET="$$(cat /run/secrets/rce_ecosystem_secret)"
+        exec /tini -- /usr/src/entrypoint
+    environment:
+      NODE_ENV: production
+      HTTP_PROTOCOL_OVERRIDE: https
+      PASSENGER_MIN_INSTANCES: "1"
+      PASSENGER_MAX_POOL_SIZE: "2"
+      NGINX_WORKER_CONNECTIONS: "2048"
+      STATSD_HOST: "127.0.0.1"
+      STATSD_PORT: "8125"
+    secrets:
+      - rce_ecosystem_key
+      - rce_ecosystem_secret
+    ports:
+      - "127.0.0.1:3000:80"
+    networks:
+      - app
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://127.0.0.1/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  canvas_brandable_css:
+  canvas_logs:
+  canvas_tmp_files:
+  redis_data:
+
+secrets:
+  rce_ecosystem_key:
+    file: ${SECRET_DIR:-/opt/boneslms/shared/secrets}/rce_ecosystem_key
+  rce_ecosystem_secret:
+    file: ${SECRET_DIR:-/opt/boneslms/shared/secrets}/rce_ecosystem_secret

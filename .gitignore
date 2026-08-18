@@ -11,6 +11,12 @@
 # That's what .git/info/exclude and core.excludesfile are for :)
 .bundle/
 .env
+.terraform/
+__pycache__/
+*.py[cod]
+*.tfstate
+*.tfstate.*
+*.tfplan
 .mutagen
 .swc
 .idea/
@@ -40,6 +46,12 @@ CLAUDE.local.md
 /db/schema.rb
 /db/*sql
 docker-compose.override.yml
+/ops/staging/infra/bootstrap/terraform.tfvars
+/ops/staging/infra/main/backend.hcl
+/ops/staging/infra/main/terraform.tfvars
+/ops/staging/.credentials.env
+/ops/staging/release.env
+/ops/staging/secrets/*.env
 /exports/
 /Gemfile.*.plugins.lock
 /log/*

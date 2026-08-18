@@ -1,0 +1,92 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - docker-compose-v2
+  - docker.io
+  - jq
+  - openssh-server
+  - ufw
+
+groups:
+  - docker
+
+users:
+  - name: deploy
+    gecos: Bones LMS deploy user
+    groups:
+      - docker
+    lock_passwd: true
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ${deploy_public_key}
+
+disable_root: true
+ssh_pwauth: false
+ssh_deletekeys: true
+ssh_genkeytypes: [ed25519]
+ssh_keys:
+  ed25519_private: |
+    ${host_private_key}
+  ed25519_public: ${host_public_key}
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-boneslms.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      PubkeyAuthentication yes
+      AllowUsers deploy
+  - path: ${cloudflared_tokenfile}
+    owner: root:root
+    permissions: "0600"
+    content: |
+      ${tunnel_token}
+  - path: /etc/systemd/system/boneslms-tunnel.service
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Bones LMS Cloudflare Tunnel
+      Requires=docker.service
+      After=docker.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Restart=always
+      RestartSec=5s
+      ExecStartPre=-/usr/bin/docker rm -f boneslms-tunnel
+      ExecStart=/usr/bin/docker run --rm --name boneslms-tunnel --network host --volume ${cloudflared_tokenfile}:/run/secrets/tunnel_token:ro --env TUNNEL_TOKEN_FILE=/run/secrets/tunnel_token ${cloudflared_image} tunnel --protocol http2 run
+      ExecStop=/usr/bin/docker stop --time 30 boneslms-tunnel
+      TimeoutStopSec=45s
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - install -d -m 0750 -o deploy -g deploy /opt/boneslms /opt/boneslms/releases
+  - install -d -m 0700 -o deploy -g deploy /opt/boneslms/shared/config /opt/boneslms/shared/secrets
+  - chown 65532:65532 ${cloudflared_tokenfile}
+  - chmod 0600 ${cloudflared_tokenfile}
+  - systemctl restart ssh
+  - systemctl enable --now docker
+  - /usr/bin/docker pull ${cloudflared_image}
+  - systemctl daemon-reload
+  - systemctl enable --now boneslms-tunnel
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow from ${bootstrap_ssh_cidr} to any port 22 proto tcp
+  - ufw --force enable
+  - test -f /swapfile || fallocate -l 2G /swapfile
+  - chmod 0600 /swapfile
+  - mkswap /swapfile || true
+  - swapon /swapfile || true
+  - grep -qF '/swapfile none swap sw 0 0' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+final_message: "Bones LMS staging host bootstrap complete"

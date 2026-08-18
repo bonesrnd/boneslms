@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: ops/staging/secrets/staging\.env\.sops$
+    input_type: dotenv
+    age: age16k9k60npf97gk3x2hu0jp9gc423hlwu8m9n60wcc3xd7xy7a6f5qdaphve

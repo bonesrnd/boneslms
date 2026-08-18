@@ -3,6 +3,8 @@ ARG RUBY=3.4
 
 <% if jenkins? -%>
 FROM 948781806214.dkr.ecr.us-east-1.amazonaws.com/docker.io/instructure/ruby-passenger:$RUBY-jammy
+<% elsif production? -%>
+FROM instructure/ruby-passenger:$RUBY-jammy@sha256:80d3a0e22c6ae228494de406d67fca88d7ff2de89fece021423206087190fcbe
 <% else -%>
 FROM instructure/ruby-passenger:$RUBY-jammy
 <% end -%>
@@ -71,7 +73,7 @@ RUN mkdir -p /etc/apt/keyrings \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /home/docker/.gem/ruby/$RUBY_MAJOR.0
 
-RUN gem install bundler --no-document -v 2.5.10 \
+RUN gem install bundler --no-document -v 2.6.7 \
   && find $GEM_HOME ! -user docker | xargs chown docker:docker
 RUN npm install -g npm@9.8.1 && npm cache clean --force
 
