@@ -196,12 +196,14 @@ jobs:
             "${ssh_command[@]}" \
               "tar --extract --gzip --file - --directory '${release_dir}'"
 
-          tar \
-            --directory "${RUNNER_TEMP}/runtime" \
-            --create \
-            --gzip \
-            --file - \
-            config secrets |
+          (
+            cd "${RUNNER_TEMP}/runtime"
+            tar \
+              --create \
+              --gzip \
+              --file - \
+              config/* secrets/*
+          ) |
             "${ssh_command[@]}" \
               "tar --extract --gzip --unlink-first --no-same-owner --file - --directory /opt/boneslms/shared"
 
