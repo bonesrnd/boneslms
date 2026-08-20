@@ -26,11 +26,6 @@ variable "cloudflare_zone_id" {
   type        = string
 }
 
-variable "cloudflare_otp_identity_provider_id" {
-  description = "Existing Cloudflare One-Time PIN identity provider ID."
-  type        = string
-}
-
 variable "admin_email" {
   description = "Email allowed through Cloudflare Access and used for Canvas bootstrap."
   type        = string

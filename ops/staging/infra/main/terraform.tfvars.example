@@ -1,6 +1,5 @@
 bootstrap_ssh_cidr                   = "replace-with-administrator-ip/32"
 cloudflare_account_id               = "replace-with-cloudflare-account-id"
-cloudflare_otp_identity_provider_id = "replace-with-existing-onetimepin-id"
 cloudflare_zone_id                   = "replace-with-bonesrnd-com-zone-id"
 
 # Defaults selected for Bones LMS staging:

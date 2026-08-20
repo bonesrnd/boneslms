@@ -32,8 +32,9 @@ gh auth login
 ```
 
 The Cloudflare token needs permission to manage DNS, Tunnels, Access
-applications, policies, and service tokens, plus read identity providers for
-`bonesrnd.com`.
+applications, policies, service tokens, and identity providers for
+`bonesrnd.com`. For Access login diagnostics, also grant `Access: Audit Logs`
+read and `Account Settings` read.
 
 Keep bootstrap API tokens out of shell history by writing them to the ignored
 `ops/staging/.credentials.env` with mode `0600`:
@@ -93,9 +94,9 @@ manager, never commit it, and do not run bootstrap concurrently.
 ## 2. Provision staging
 
 Copy `terraform.tfvars.example` to the ignored `terraform.tfvars`, then set the
-Cloudflare account, zone, existing One-Time PIN identity-provider ID, and a
-single administrator `/32` or `/128`. Set `enable_bootstrap_ssh_ingress = true`
-only while validating a new host.
+Cloudflare account, zone, and a single administrator `/32` or `/128`. OpenTofu
+creates a Cloudflare login provider restricted to members of that account.
+Set `enable_bootstrap_ssh_ingress = true` only while validating a new host.
 
 ```bash
 tofu -chdir=ops/staging/infra/main init \

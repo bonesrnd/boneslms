@@ -147,17 +147,48 @@ class InfrastructureTest(unittest.TestCase):
             configuration,
         )
 
-    def test_cloudflare_reuses_the_builtin_otp_provider(self):
+    def test_cloudflare_access_uses_account_restricted_cloudflare_login(self):
         configuration = CLOUDFLARE.read_text()
 
         self.assertIn(
+            'resource "cloudflare_zero_trust_access_identity_provider" "account_login"',
+            configuration,
+        )
+        identity_provider = configuration.split(
+            'resource "cloudflare_zero_trust_access_identity_provider" "account_login"',
+            maxsplit=1,
+        )[1].split(
+            'resource "cloudflare_zero_trust_access_service_token"',
+            maxsplit=1,
+        )[0]
+        self.assertRegex(identity_provider, r'(?m)^\s*name\s*=\s*"Cloudflare"\s*$')
+        self.assertRegex(identity_provider, r'(?m)^\s*type\s*=\s*"cloudflare"\s*$')
+        self.assertRegex(
+            identity_provider,
+            r"(?m)^\s*restrict_to_account_members\s*=\s*true\s*$",
+        )
+
+        canvas_application = configuration.split(
+            'resource "cloudflare_zero_trust_access_application" "canvas"',
+            maxsplit=1,
+        )[1].split(
+            'resource "cloudflare_zero_trust_access_application" "ssh"',
+            maxsplit=1,
+        )[0]
+        ssh_application = configuration.split(
+            'resource "cloudflare_zero_trust_access_application" "ssh"',
+            maxsplit=1,
+        )[1]
+        expected_provider = (
+            "cloudflare_zero_trust_access_identity_provider.account_login.id"
+        )
+        self.assertIn(expected_provider, canvas_application)
+        self.assertIn(expected_provider, ssh_application)
+        self.assertNotIn(
             'data "cloudflare_zero_trust_access_identity_provider" "otp"',
             configuration,
         )
-        self.assertNotIn(
-            'resource "cloudflare_zero_trust_access_identity_provider" "otp"',
-            configuration,
-        )
+        self.assertNotIn("cloudflare_otp_identity_provider_id", VARIABLES.read_text())
         self.assertIn("digitalocean_droplet.app.ipv4_address", configuration)
         self.assertIn("digitalocean_droplet.app.ipv6_address", configuration)
 

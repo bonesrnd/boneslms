@@ -78,9 +78,14 @@ resource "cloudflare_dns_record" "ssh" {
   comment = "Managed by OpenTofu for Bones LMS staging"
 }
 
-data "cloudflare_zero_trust_access_identity_provider" "otp" {
-  account_id           = var.cloudflare_account_id
-  identity_provider_id = var.cloudflare_otp_identity_provider_id
+resource "cloudflare_zero_trust_access_identity_provider" "account_login" {
+  account_id = var.cloudflare_account_id
+  name       = "Cloudflare"
+  type       = "cloudflare"
+
+  config = {
+    restrict_to_account_members = true
+  }
 }
 
 resource "cloudflare_zero_trust_access_service_token" "github" {
@@ -142,7 +147,7 @@ resource "cloudflare_zero_trust_access_application" "canvas" {
   type                      = "self_hosted"
   domain                    = local.canvas_hostname
   session_duration          = "12h"
-  allowed_idps              = [data.cloudflare_zero_trust_access_identity_provider.otp.id]
+  allowed_idps              = [cloudflare_zero_trust_access_identity_provider.account_login.id]
   auto_redirect_to_identity = true
   skip_interstitial         = true
   policies = [
@@ -167,7 +172,7 @@ resource "cloudflare_zero_trust_access_application" "ssh" {
   type                      = "self_hosted"
   domain                    = local.ssh_hostname
   session_duration          = "1h"
-  allowed_idps              = [data.cloudflare_zero_trust_access_identity_provider.otp.id]
+  allowed_idps              = [cloudflare_zero_trust_access_identity_provider.account_login.id]
   auto_redirect_to_identity = true
   service_auth_401_redirect = true
   policies = [
